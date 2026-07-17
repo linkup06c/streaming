@@ -20,33 +20,157 @@ const io = new Server(server, {
 });
 
 
-app.get("/", (req,res)=>{
+// Estado atual da transmissão
+let transmission = {
+    video: null,
+    startedAt: null,
+    playing: false
+};
+
+
+// Página de teste
+app.get("/", (req, res) => {
+
     res.send("Servidor de transmissão online!");
+
 });
 
 
-io.on("connection", (socket)=>{
+// Conexões Socket.IO
+io.on("connection", (socket) => {
 
-    console.log("Dispositivo conectado:", socket.id);
+
+    console.log("Conectado:", socket.id);
 
 
-    socket.on("disconnect", ()=>{
 
-        console.log("Dispositivo saiu:", socket.id);
+    // Identificação do dispositivo
+    socket.on("register", (data) => {
+
+
+        socket.deviceType = data.type;
+
+
+        console.log(
+            "Dispositivo:",
+            data.type,
+            socket.id
+        );
+
+
+        // Se for player, manda o estado atual
+        if(data.type === "player") {
+
+
+            socket.emit(
+                "sync-transmission",
+                transmission
+            );
+
+
+        }
+
 
     });
 
+
+
+    // Controle envia vídeo
+    socket.on("play-video", (data) => {
+
+
+        console.log(
+            "Novo vídeo:",
+            data.url
+        );
+
+
+        transmission = {
+
+            video: data.url,
+
+            startedAt: Date.now(),
+
+            playing: true
+
+        };
+
+
+        // Envia para todos os players
+
+        io.emit(
+            "play-video",
+            transmission
+        );
+
+
+    });
+
+
+
+
+    // Pausar
+    socket.on("pause-video", () => {
+
+
+        transmission.playing = false;
+
+
+        io.emit(
+            "pause-video"
+        );
+
+
+    });
+
+
+
+
+    // Continuar
+
+    socket.on("resume-video", () => {
+
+
+        transmission.playing = true;
+
+
+        io.emit(
+            "resume-video",
+            transmission
+        );
+
+
+    });
+
+
+
+
+    socket.on("disconnect", () => {
+
+
+        console.log(
+            "Desconectado:",
+            socket.id
+        );
+
+
+    });
+
+
 });
+
 
 
 const PORT = process.env.PORT || 3000;
 
 
-server.listen(PORT, ()=>{
+server.listen(PORT, () => {
+
 
     console.log(
-        "Servidor rodando na porta:",
+        "Servidor rodando na porta",
         PORT
     );
+
 
 });
