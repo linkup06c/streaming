@@ -14,163 +14,393 @@ const server = http.createServer(app);
 
 
 const io = new Server(server, {
-    cors: {
-        origin: "*"
+
+    cors:{
+        origin:"*"
     }
+
 });
 
 
-// Estado atual da transmissão
+
+// Estado central da transmissão
+
 let transmission = {
-    video: null,
-    startedAt: null,
-    playing: false
+
+    video:null,
+
+    startedAt:null,
+
+    pausedAt:0,
+
+    playing:false
+
 };
 
 
-// Página de teste
-app.get("/", (req, res) => {
 
-    res.send("Servidor de transmissão online!");
+// teste
+
+app.get("/",(req,res)=>{
+
+    res.send("X-Stream Server Online");
 
 });
 
 
-// Conexões Socket.IO
-io.on("connection", (socket) => {
 
 
-    console.log("Conectado:", socket.id);
+// lista de players conectados
 
-
-
-    // Identificação do dispositivo
-    socket.on("register", (data) => {
-
-
-        socket.deviceType = data.type;
-
-
-        console.log(
-            "Dispositivo:",
-            data.type,
-            socket.id
-        );
-
-
-        // Se for player, manda o estado atual
-        if(data.type === "player") {
-
-
-            socket.emit(
-                "sync-transmission",
-                transmission
-            );
-
-
-        }
-
-
-    });
+let players = 0;
 
 
 
-    // Controle envia vídeo
-    socket.on("play-video", (data) => {
+io.on("connection",(socket)=>{
 
 
-        console.log(
-            "Novo vídeo:",
-            data.url
-        );
-
-
-        transmission = {
-
-            video: data.url,
-
-            startedAt: Date.now(),
-
-            playing: true
-
-        };
-
-
-        // Envia para todos os players
-
-        io.emit(
-            "play-video",
-            transmission
-        );
-
-
-    });
+console.log(
+"Conectado:",
+socket.id
+);
 
 
 
+// registro
 
-    // Pausar
-    socket.on("pause-video", () => {
-
-
-        transmission.playing = false;
+socket.on("register",(data)=>{
 
 
-        io.emit(
-            "pause-video"
-        );
-
-
-    });
+socket.deviceType=data.type;
 
 
 
-
-    // Continuar
-
-    socket.on("resume-video", () => {
-
-
-        transmission.playing = true;
-
-
-        io.emit(
-            "resume-video",
-            transmission
-        );
-
-
-    });
+console.log(
+"Tipo:",
+data.type
+);
 
 
 
+// player recebe estado atual
 
-    socket.on("disconnect", () => {
-
-
-        console.log(
-            "Desconectado:",
-            socket.id
-        );
+if(data.type==="player"){
 
 
-    });
+players++;
+
+
+socket.emit(
+"sync-transmission",
+transmission
+);
+
+
+}
+
+
+
+// controle recebe confirmação
+
+
+if(data.type==="control"){
+
+
+socket.emit(
+"server-status",
+{
+
+players:players,
+transmission:transmission
+
+}
+
+);
+
+
+}
+
 
 
 });
 
 
 
-const PORT = process.env.PORT || 3000;
 
 
-server.listen(PORT, () => {
+// ===============================
+// NOVO VÍDEO
+// ===============================
 
 
-    console.log(
-        "Servidor rodando na porta",
-        PORT
-    );
+socket.on("play-video",(data)=>{
+
+
+if(socket.deviceType!=="control")
+return;
+
+
+
+console.log(
+"Novo vídeo:",
+data.url
+);
+
+
+
+transmission={
+
+
+video:data.url,
+
+
+startedAt:Date.now(),
+
+
+pausedAt:0,
+
+
+playing:true
+
+
+};
+
+
+
+
+io.emit(
+"play-video",
+transmission
+);
+
+
+
+});
+
+
+
+
+
+
+// ===============================
+// PAUSAR GLOBAL
+// ===============================
+
+
+socket.on("pause-video",()=>{
+
+
+if(socket.deviceType!=="control")
+return;
+
+
+
+if(
+transmission.playing
+){
+
+
+
+transmission.pausedAt =
+(Date.now()-transmission.startedAt)/1000;
+
+
+
+}
+
+
+
+transmission.playing=false;
+
+
+
+io.emit(
+"pause-video",
+{
+
+time:transmission.pausedAt
+
+}
+
+);
+
+
+
+});
+
+
+
+
+
+
+// ===============================
+// RETOMAR GLOBAL
+// ===============================
+
+
+socket.on("resume-video",()=>{
+
+
+if(socket.deviceType!=="control")
+return;
+
+
+
+transmission.startedAt = 
+Date.now() -
+(transmission.pausedAt*1000);
+
+
+
+transmission.playing=true;
+
+
+
+io.emit(
+"resume-video",
+transmission
+);
+
+
+
+});
+
+
+
+
+
+
+
+// ===============================
+// ALTERAR TEMPO
+// ===============================
+
+
+socket.on("seek-video",(data)=>{
+
+
+if(socket.deviceType!=="control")
+return;
+
+
+
+let tempo =
+Number(data.time);
+
+
+
+if(isNaN(tempo))
+return;
+
+
+
+
+transmission.startedAt =
+Date.now()-(tempo*1000);
+
+
+
+transmission.pausedAt =
+tempo;
+
+
+
+io.emit(
+"seek-video",
+{
+
+time:tempo
+
+}
+
+);
+
+
+
+});
+
+
+
+
+
+
+
+// sincronização periódica
+
+setInterval(()=>{
+
+
+if(
+transmission.video &&
+transmission.playing
+){
+
+
+io.emit(
+"sync-time",
+{
+
+time:
+(Date.now()-transmission.startedAt)/1000
+
+}
+
+);
+
+
+}
+
+
+
+},5000);
+
+
+
+
+
+
+
+socket.on("disconnect",()=>{
+
+
+if(socket.deviceType==="player"){
+
+players--;
+
+}
+
+
+console.log(
+"Saiu:",
+socket.id
+);
+
+
+
+});
+
+
+
+});
+
+
+
+
+
+
+const PORT =
+process.env.PORT || 3000;
+
+
+
+server.listen(PORT,()=>{
+
+
+console.log(
+"Servidor rodando:",
+PORT
+);
+
 
 
 });
