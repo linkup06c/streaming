@@ -3,426 +3,437 @@ const http = require("http");
 const cors = require("cors");
 const { Server } = require("socket.io");
 
+
 const app = express();
 
+
 app.use(cors());
+
 app.use(express.json());
+
+
 
 const server = http.createServer(app);
 
-const io = new Server(server, {
-    cors: {
-        origin: "*"
+
+
+const io = new Server(server,{
+
+    cors:{
+        origin:"*"
     }
+
 });
 
-/*
-====================================
-ESTADO GLOBAL DO SERVIDOR
-====================================
-*/
 
-let players = 0;
-let controls = 0;
+
+
 
 /*
-====================================
-PLAYLIST
-====================================
+========================
+ESTADO GLOBAL
+========================
 */
+
+
+let transmission = {
+
+    video:null,
+
+    startedAt:null,
+
+    pausedAt:0,
+
+    playing:false
+
+};
+
+
+
+
 
 let playlist = [];
 
+
 let currentIndex = -1;
 
+
+
+
+
+let players = 0;
+
+
+let controls = 0;
+
+
+
+
+
+
+
+app.get("/",(req,res)=>{
+
+
+    res.send(
+        "X-Stream Sync Server Online"
+    );
+
+
+});
+
+
+
+
+
+
+
+
+
 /*
-====================================
-TRANSMISSÃO
-====================================
+========================
+CONEXÕES
+========================
 */
 
-let transmission = {
-    video: null,
-    startedAt: null,
-    pausedAt: 0,
-    playing: false,
-    standby: true
+
+io.on("connection",(socket)=>{
+
+
+console.log(
+"Conectado:",
+socket.id
+);
+
+
+
+
+
+
+
+
+
+/*
+========================
+REGISTRO
+========================
+*/
+
+
+socket.on("register",(data)=>{
+
+
+socket.deviceType =
+data.type;
+
+
+
+
+
+console.log(
+"Tipo:",
+data.type
+);
+
+
+
+
+
+if(data.type==="player"){
+
+
+players++;
+
+
+
+socket.emit(
+
+"sync-transmission",
+
+transmission
+
+);
+
+
+
+socket.emit(
+
+"playlist-updated",
+
+{
+
+playlist,
+
+currentIndex
+
+}
+
+);
+
+
+
+}
+
+
+
+
+
+
+if(data.type==="control"){
+
+
+controls++;
+
+
+
+socket.emit(
+
+"server-status",
+
+{
+
+players,
+
+controls,
+
+transmission
+
+}
+
+);
+
+
+
+socket.emit(
+
+"playlist-updated",
+
+{
+
+playlist,
+
+currentIndex
+
+}
+
+);
+
+
+
+}
+
+
+
+});
+
+
+
+
+
+
+
+
+
+/*
+========================
+ADICIONAR VÍDEO
+========================
+*/
+
+
+socket.on("add-video",(data)=>{
+
+
+if(socket.deviceType!=="control")
+return;
+
+
+
+if(!data.url)
+return;
+
+
+
+const item = {
+
+
+id:
+
+Date.now().toString(),
+
+
+url:data.url
+
+
 };
 
-/*
-====================================
-FUNÇÕES AUXILIARES
-====================================
-*/
 
-function currentVideo() {
 
-    if (
-        currentIndex < 0 ||
-        currentIndex >= playlist.length
-    ) {
-        return null;
-    }
 
-    return playlist[currentIndex];
+playlist.push(item);
+
+
+
+
+
+if(currentIndex===-1){
+
+currentIndex=0;
 
 }
 
-function playlistState() {
 
-    return {
-        playlist,
-        currentIndex
-    };
 
-}
 
-function sendPlaylist() {
 
-    io.emit(
-        "playlist-updated",
-        playlistState()
-    );
 
-}
+io.emit(
 
-function sendServerStatus() {
+"playlist-updated",
 
-    io.emit(
-        "server-status",
-        {
-            players,
-            controls,
-            transmission,
-            playlist,
-            currentIndex
-        }
-    );
+{
+
+playlist,
+
+currentIndex
 
 }
 
-function standbyMode() {
+);
 
-    transmission = {
-        video: null,
-        startedAt: null,
-        pausedAt: 0,
-        playing: false,
-        standby: true
-    };
 
-    io.emit("stop-video");
 
-    sendServerStatus();
+});
+
+
+
+
+
+
+
+
+
+/*
+========================
+REMOVER VÍDEO
+========================
+*/
+
+
+socket.on("remove-video",(data)=>{
+
+
+if(socket.deviceType!=="control")
+return;
+
+
+
+playlist =
+
+playlist.filter(
+
+item=>item.id !== data.id
+
+);
+
+
+
+
+
+if(
+currentIndex >= playlist.length
+){
+
+currentIndex =
+playlist.length-1;
+
 
 }
 
-function startTransmission(item) {
 
-    transmission = {
-        video: item.url,
-        startedAt: Date.now(),
-        pausedAt: 0,
-        playing: true,
-        standby: false
-    };
 
-    io.emit(
-        "play-video",
-        transmission
-    );
 
-    sendServerStatus();
+
+
+io.emit(
+
+"playlist-updated",
+
+{
+
+playlist,
+
+currentIndex
 
 }
 
-app.get("/", (req, res) => {
-
-    res.send("X-Stream Sync Server Online");
-
-});
-id="0z8q5h"
-io.on("connection", (socket) => {
-
-
-    console.log(
-        "Conectado:",
-        socket.id
-    );
-
-
-    /*
-    ================================
-    REGISTRO DE DISPOSITIVOS
-    ================================
-    */
-
-
-    socket.on("register", (data) => {
-
-
-        socket.deviceType = data.type;
-
-
-        console.log(
-            "Tipo conectado:",
-            data.type
-        );
-
-
-
-        if(data.type === "player"){
-
-
-            players++;
-
-
-            /*
-            Envia o estado atual
-            para o novo player
-            */
-
-
-            socket.emit(
-                "sync-transmission",
-                transmission
-            );
-
-
-            socket.emit(
-                "playlist-updated",
-                playlistState()
-            );
-
-
-
-        }
-
-
-
-
-
-        if(data.type === "control"){
-
-
-            controls++;
-
-
-            /*
-            Envia informações
-            para a central
-            */
-
-
-            socket.emit(
-                "server-status",
-                {
-
-                    players,
-                    controls,
-                    transmission,
-                    playlist,
-                    currentIndex
-
-                }
-            );
-
-
-            socket.emit(
-                "playlist-updated",
-                playlistState()
-            );
-
-
-        }
-
-
-
-    });
-
-
-
-
-
-    /*
-    ================================
-    DESCONECTAR
-    ================================
-    */
-
-
-    socket.on("disconnect", () => {
-
-
-
-        if(socket.deviceType === "player"){
-
-
-            players--;
-
-
-            if(players < 0)
-                players = 0;
-
-
-        }
-
-
-
-
-        if(socket.deviceType === "control"){
-
-
-            controls--;
-
-
-            if(controls < 0)
-                controls = 0;
-
-
-        }
-
-
-
-        console.log(
-            "Saiu:",
-            socket.id
-        );
-
-
-
-        sendServerStatus();
-
-
-
-    });
+);
 
 
 
 });
-
 
 /*
-================================
-ADICIONAR VÍDEO NA PLAYLIST
-================================
-*/
-
-socket.on("add-video", (data) => {
-
-
-    if(socket.deviceType !== "control")
-        return;
-
-
-    if(!data.url)
-        return;
-
-
-
-    const item = {
-
-        id: Date.now().toString(),
-
-        url: data.url,
-
-        addedAt: Date.now()
-
-    };
-
-
-
-    playlist.push(item);
-
-
-
-    /*
-    Se não existe vídeo tocando,
-    seleciona automaticamente o primeiro
-    */
-
-
-    if(
-        currentIndex === -1 &&
-        playlist.length === 1
-    ){
-
-        currentIndex = 0;
-
-    }
-
-
-
-    sendPlaylist();
-
-
-
-});
-
-
-
-
-
-
-
-/*
-================================
-REMOVER VÍDEO DA PLAYLIST
-================================
+========================
+LIMPAR PLAYLIST
+========================
 */
 
 
-socket.on("remove-video", (data)=>{
+socket.on("clear-playlist",()=>{
 
 
-    if(socket.deviceType !== "control")
-        return;
-
-
-
-    const index = playlist.findIndex(
-        item => item.id === data.id
-    );
+if(socket.deviceType!=="control")
+return;
 
 
 
-    if(index === -1)
-        return;
+playlist=[];
+
+
+currentIndex=-1;
 
 
 
-    playlist.splice(
-        index,
-        1
-    );
+transmission={
+
+video:null,
+
+startedAt:null,
+
+pausedAt:0,
+
+playing:false
+
+};
 
 
 
 
-    /*
-    Ajusta o índice atual
-    */
 
+io.emit(
 
-    if(currentIndex >= playlist.length){
+"playlist-updated",
 
-        currentIndex = playlist.length - 1;
+{
 
-    }
+playlist,
 
+currentIndex
 
+}
 
-    if(playlist.length === 0){
-
-        currentIndex = -1;
-
-        standbyMode();
-
-    }
+);
 
 
 
-    sendPlaylist();
+
+
+io.emit(
+
+"stop-video"
+
+);
 
 
 
@@ -435,120 +446,99 @@ socket.on("remove-video", (data)=>{
 
 
 
+
 /*
-================================
-LIMPAR TODA PLAYLIST
-================================
+========================
+SELECIONAR VÍDEO
+========================
 */
 
 
-socket.on("clear-playlist", ()=>{
+socket.on("select-video",(data)=>{
 
 
-    if(socket.deviceType !== "control")
-        return;
-
-
-
-    playlist = [];
-
-    currentIndex = -1;
+if(socket.deviceType!=="control")
+return;
 
 
 
-    standbyMode();
+let index =
+
+playlist.findIndex(
+
+item=>item.id===data.id
+
+);
 
 
 
-    sendPlaylist();
+if(index===-1)
+return;
 
 
 
-});
-
-
-
-
+currentIndex=index;
 
 
 
 
-/*
-================================
-SELECIONAR VÍDEO DA LISTA
-================================
-*/
-
-
-socket.on("select-video", (data)=>{
-
-
-    if(socket.deviceType !== "control")
-        return;
+let item =
+playlist[currentIndex];
 
 
 
-    const index = playlist.findIndex(
-
-        item => item.id === data.id
-
-    );
 
 
 
-    if(index === -1)
-        return;
+transmission={
+
+
+video:item.url,
+
+
+startedAt:Date.now(),
+
+
+pausedAt:0,
+
+
+playing:true
+
+
+};
 
 
 
-    currentIndex = index;
 
 
 
-    startTransmission(
-        playlist[currentIndex]
-    );
+
+io.emit(
+
+"play-video",
+
+transmission
+
+);
 
 
 
-});
-
-
-/*
-================================
-PAUSAR TRANSMISSÃO
-================================
-*/
-
-socket.on("pause-video", ()=>{
-
-
-    if(socket.deviceType !== "control")
-        return;
 
 
 
-    if(transmission.playing){
+io.emit(
 
+"playlist-updated",
 
-        transmission.pausedAt =
-            (Date.now() - transmission.startedAt) / 1000;
+{
 
+playlist,
 
-    }
+currentIndex
 
+}
 
-
-    transmission.playing = false;
-
-
-
-    io.emit(
-        "pause-video",
-        {
-            time: transmission.pausedAt
-        }
-    );
+);
 
 
 
@@ -561,155 +551,48 @@ socket.on("pause-video", ()=>{
 
 
 
-/*
-================================
-CONTINUAR TRANSMISSÃO
-================================
-*/
-
-
-socket.on("resume-video", ()=>{
-
-
-    if(socket.deviceType !== "control")
-        return;
-
-
-
-    transmission.startedAt =
-        Date.now() -
-        (transmission.pausedAt * 1000);
-
-
-
-    transmission.playing = true;
-
-    transmission.standby = false;
-
-
-
-    io.emit(
-        "resume-video",
-        transmission
-    );
-
-
-
-});
-
-
-
-
-
-
-
 
 /*
-================================
-SEEK (MUDAR TEMPO)
-================================
-*/
-
-
-socket.on("seek-video", (data)=>{
-
-
-    if(socket.deviceType !== "control")
-        return;
-
-
-
-    let tempo =
-        Number(data.time);
-
-
-
-    if(isNaN(tempo))
-        return;
-
-
-
-    transmission.startedAt =
-        Date.now() -
-        (tempo * 1000);
-
-
-
-    transmission.pausedAt = tempo;
-
-
-
-    io.emit(
-        "seek-video",
-        {
-            time: tempo
-        }
-    );
-
-
-
-});
-
-
-
-
-
-
-
-
-/*
-================================
+========================
 PRÓXIMO VÍDEO
-================================
+========================
 */
 
 
-socket.on("next-video", ()=>{
+socket.on("next-video",()=>{
 
 
-    if(socket.deviceType !== "control")
-        return;
+if(socket.deviceType!=="control")
+return;
 
 
 
-    if(
-        playlist.length === 0
-    ){
-
-        standbyMode();
-
-        return;
-
-    }
+if(
+playlist.length===0
+)
+return;
 
 
 
 
-    if(
-        currentIndex < playlist.length - 1
-    ){
 
-        currentIndex++;
+currentIndex++;
 
 
-        startTransmission(
-            playlist[currentIndex]
-        );
+
+if(
+currentIndex >= playlist.length
+){
+
+currentIndex=0;
+
+}
 
 
-    }
-
-    else{
 
 
-        /*
-        Chegou no fim da lista
-        */
 
-        standbyMode();
-
-
-    }
+playCurrent();
 
 
 
@@ -722,46 +605,49 @@ socket.on("next-video", ()=>{
 
 
 
+
 /*
-================================
+========================
 VÍDEO ANTERIOR
-================================
+========================
 */
 
 
-socket.on("previous-video", ()=>{
+socket.on("previous-video",()=>{
 
 
-    if(socket.deviceType !== "control")
-        return;
+if(socket.deviceType!=="control")
+return;
 
 
 
-    if(
-        playlist.length === 0
-    ){
-
-        standbyMode();
-
-        return;
-
-    }
+if(
+playlist.length===0
+)
+return;
 
 
 
 
-    if(currentIndex > 0){
+
+currentIndex--;
 
 
-        currentIndex--;
+
+if(
+currentIndex < 0
+){
+
+currentIndex =
+playlist.length-1;
+
+}
 
 
-        startTransmission(
-            playlist[currentIndex]
-        );
 
 
-    }
+
+playCurrent();
 
 
 
@@ -774,145 +660,140 @@ socket.on("previous-video", ()=>{
 
 
 
+
 /*
-================================
-PARAR TRANSMISSÃO MANUALMENTE
-================================
+========================
+FUNÇÃO TOCAR ATUAL
+========================
 */
 
 
-socket.on("stop-video", ()=>{
-
-
-    if(socket.deviceType !== "control")
-        return;
+function playCurrent(){
 
 
 
-    standbyMode();
+let item =
+
+playlist[currentIndex];
 
 
 
-});
+if(!item)
+return;
+
+
+
+
+
+transmission={
+
+
+video:item.url,
+
+
+startedAt:Date.now(),
+
+
+pausedAt:0,
+
+
+playing:true
+
+
+};
+
+
+
+
+
+
+
+io.emit(
+
+"play-video",
+
+transmission
+
+);
+
+
+
+
+
+
+
+io.emit(
+
+"playlist-updated",
+
+{
+
+playlist,
+
+currentIndex
+
+}
+
+);
+
+
+
+}
+
+
+
+
+
+
+
+
 
 /*
-================================
-PLAYER AVISA QUE TERMINOU
-================================
-*/
-
-socket.on("video-ended", ()=>{
-
-
-    if(socket.deviceType !== "player")
-        return;
-
-
-
-    console.log(
-        "Vídeo terminou"
-    );
-
-
-
-    /*
-    Verifica se existe próximo vídeo
-    */
-
-
-    if(
-        currentIndex < playlist.length - 1
-    ){
-
-
-        currentIndex++;
-
-
-
-        startTransmission(
-            playlist[currentIndex]
-        );
-
-
-
-    }
-
-    else{
-
-
-        /*
-        Não tem mais vídeos
-        Volta para standby
-        */
-
-
-        standbyMode();
-
-
-    }
-
-
-
-});
-
-
-
-
-
-
-
-
-/*
-================================
-PLAYER AVISA ERRO NO VÍDEO
-================================
+========================
+PAUSAR
+========================
 */
 
 
-socket.on("video-error", ()=>{
+socket.on("pause-video",()=>{
 
 
-    if(socket.deviceType !== "player")
-        return;
-
-
-
-    console.log(
-        "Erro no vídeo"
-    );
+if(socket.deviceType!=="control")
+return;
 
 
 
-    /*
-    Tenta pular para o próximo
-    */
 
 
-    if(
-        currentIndex < playlist.length - 1
-    ){
+if(transmission.playing){
 
 
 
-        currentIndex++;
+transmission.pausedAt =
+
+(Date.now()-transmission.startedAt)/1000;
 
 
 
-        startTransmission(
-            playlist[currentIndex]
-        );
+}
 
 
 
-    }
-
-    else{
 
 
-        standbyMode();
+
+transmission.playing=false;
 
 
-    }
+
+
+
+
+io.emit(
+
+"pause-video"
+
+);
 
 
 
@@ -925,68 +806,370 @@ socket.on("video-error", ()=>{
 
 
 
+
 /*
-================================
-VALIDAR SE EXISTE TRANSMISSÃO
-================================
+========================
+RETOMAR
+========================
 */
 
 
-socket.on("request-status", ()=>{
+socket.on("resume-video",()=>{
 
 
-    socket.emit(
-        "server-status",
-        {
+if(socket.deviceType!=="control")
+return;
 
-            players,
 
-            controls,
 
-            transmission,
+transmission.startedAt =
 
-            playlist,
+Date.now() -
 
-            currentIndex
+(transmission.pausedAt*1000);
 
-        }
-    );
+
+
+
+
+transmission.playing=true;
+
+
+
+
+
+
+io.emit(
+
+"resume-video",
+
+transmission
+
+);
+
+
+
+});
+
+
+
+
+
+
+
+
+
+/*
+========================
+PARAR / STANDBY
+========================
+*/
+
+
+socket.on("stop-video",()=>{
+
+
+if(socket.deviceType!=="control")
+return;
+
+
+
+
+transmission={
+
+
+video:null,
+
+
+startedAt:null,
+
+
+pausedAt:0,
+
+
+playing:false
+
+
+};
+
+
+
+
+
+io.emit(
+
+"stop-video"
+
+);
+
 
 
 });
 
 /*
-================================
-SINCRONIZAÇÃO GLOBAL
-================================
+========================
+VÍDEO TERMINOU
+========================
 */
+
+
+socket.on("video-ended",()=>{
+
+
+if(socket.deviceType!=="player")
+return;
+
+
+
+// tenta próximo automaticamente
+
+
+if(
+playlist.length > 0
+){
+
+currentIndex++;
+
+
+
+if(
+currentIndex >= playlist.length
+){
+
+currentIndex=0;
+
+}
+
+
+
+playCurrent();
+
+
+
+}
+
+else{
+
+
+transmission={
+
+
+video:null,
+
+
+startedAt:null,
+
+
+pausedAt:0,
+
+
+playing:false
+
+
+};
+
+
+
+io.emit(
+
+"stop-video"
+
+);
+
+
+
+}
+
+
+
+});
+
+
+
+
+
+
+
+
+
+/*
+========================
+ERRO NO VÍDEO
+========================
+*/
+
+
+socket.on("video-error",()=>{
+
+
+if(socket.deviceType!=="player")
+return;
+
+
+
+console.log(
+"Erro recebido do player:",
+socket.id
+);
+
+
+
+
+
+if(
+playlist.length > 0
+){
+
+currentIndex++;
+
+
+
+if(
+currentIndex >= playlist.length
+){
+
+currentIndex=0;
+
+}
+
+
+
+
+playCurrent();
+
+
+
+}
+
+else{
+
+
+io.emit(
+
+"stop-video"
+
+);
+
+
+
+}
+
+
+
+});
+
+
+
+
+
+
+
+
+
+/*
+========================
+SINCRONIZAÇÃO
+========================
+*/
+
+
+socket.on("seek-video",(data)=>{
+
+
+if(socket.deviceType!=="control")
+return;
+
+
+
+let tempo =
+Number(data.time);
+
+
+
+if(isNaN(tempo))
+return;
+
+
+
+
+
+transmission.startedAt =
+
+Date.now() -
+
+(tempo*1000);
+
+
+
+
+
+transmission.pausedAt =
+tempo;
+
+
+
+
+
+io.emit(
+
+"seek-video",
+
+{
+
+time:tempo
+
+}
+
+);
+
+
+
+});
+
+
+
+
+
+
+
 
 setInterval(()=>{
 
 
-    if(
-        transmission.video &&
-        transmission.playing
-    ){
+if(
+
+transmission.video &&
+
+transmission.playing
+
+){
 
 
-        io.emit(
-            "sync-time",
-            {
 
-                time:
-                (Date.now() - transmission.startedAt) / 1000,
+io.emit(
 
+"sync-time",
 
-                serverTime:
-                Date.now()
+{
 
 
-            }
-        );
+time:
+
+(Date.now()-transmission.startedAt)/1000,
 
 
-    }
+serverTime:
+
+Date.now()
+
+
+}
+
+);
+
+
+
+}
 
 
 
@@ -999,25 +1182,89 @@ setInterval(()=>{
 
 
 
+
 /*
-================================
-INICIALIZAÇÃO DO SERVIDOR
-================================
+========================
+DESCONECTAR
+========================
+*/
+
+
+socket.on("disconnect",()=>{
+
+
+if(socket.deviceType==="player"){
+
+
+players--;
+
+
+}
+
+
+if(socket.deviceType==="control"){
+
+
+controls--;
+
+
+}
+
+
+
+
+console.log(
+
+"Saiu:",
+
+socket.id
+
+);
+
+
+
+});
+
+
+
+
+
+});
+
+
+
+
+
+
+
+
+
+/*
+========================
+START SERVER
+========================
 */
 
 
 const PORT =
+
 process.env.PORT || 3000;
 
 
 
-server.listen(PORT, ()=>{
 
 
-    console.log(
-        "Servidor X-Stream rodando na porta",
-        PORT
-    );
+server.listen(PORT,()=>{
+
+
+console.log(
+
+"Servidor rodando na porta",
+
+PORT
+
+);
+
 
 
 });
