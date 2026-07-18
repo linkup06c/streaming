@@ -23,8 +23,6 @@ const io = new Server(server, {
 
 
 
-// Estado central da transmissão
-
 let transmission = {
 
     video:null,
@@ -39,20 +37,17 @@ let transmission = {
 
 
 
-// teste
+let players = 0;
+
+
 
 app.get("/",(req,res)=>{
 
-    res.send("X-Stream Server Online");
+    res.send("X-Stream Sync Server Online");
 
 });
 
 
-
-
-// lista de players conectados
-
-let players = 0;
 
 
 
@@ -66,7 +61,7 @@ socket.id
 
 
 
-// registro
+
 
 socket.on("register",(data)=>{
 
@@ -81,8 +76,6 @@ data.type
 );
 
 
-
-// player recebe estado atual
 
 if(data.type==="player"){
 
@@ -100,7 +93,6 @@ transmission
 
 
 
-// controle recebe confirmação
 
 
 if(data.type==="control"){
@@ -110,8 +102,9 @@ socket.emit(
 "server-status",
 {
 
-players:players,
-transmission:transmission
+players,
+
+transmission
 
 }
 
@@ -128,9 +121,11 @@ transmission:transmission
 
 
 
-// ===============================
-// NOVO VÍDEO
-// ===============================
+
+
+
+
+// RECEBE NOVO VÍDEO
 
 
 socket.on("play-video",(data)=>{
@@ -141,30 +136,19 @@ return;
 
 
 
-console.log(
-"Novo vídeo:",
-data.url
-);
-
-
-
 transmission={
 
 
 video:data.url,
 
-
 startedAt:Date.now(),
 
-
 pausedAt:0,
-
 
 playing:true
 
 
 };
-
 
 
 
@@ -182,9 +166,10 @@ transmission
 
 
 
-// ===============================
-// PAUSAR GLOBAL
-// ===============================
+
+
+
+// PAUSAR
 
 
 socket.on("pause-video",()=>{
@@ -195,15 +180,12 @@ return;
 
 
 
-if(
-transmission.playing
-){
-
+if(transmission.playing){
 
 
 transmission.pausedAt =
-(Date.now()-transmission.startedAt)/1000;
 
+(Date.now()-transmission.startedAt)/1000;
 
 
 }
@@ -233,9 +215,10 @@ time:transmission.pausedAt
 
 
 
-// ===============================
-// RETOMAR GLOBAL
-// ===============================
+
+
+
+// CONTINUAR
 
 
 socket.on("resume-video",()=>{
@@ -246,8 +229,10 @@ return;
 
 
 
-transmission.startedAt = 
+transmission.startedAt =
+
 Date.now() -
+
 (transmission.pausedAt*1000);
 
 
@@ -271,9 +256,9 @@ transmission
 
 
 
-// ===============================
-// ALTERAR TEMPO
-// ===============================
+
+
+// SINCRONIZAR MANUALMENTE
 
 
 socket.on("seek-video",(data)=>{
@@ -294,14 +279,15 @@ return;
 
 
 
-
 transmission.startedAt =
-Date.now()-(tempo*1000);
+
+Date.now() -
+
+(tempo*1000);
 
 
 
-transmission.pausedAt =
-tempo;
+transmission.pausedAt=tempo;
 
 
 
@@ -325,7 +311,9 @@ time:tempo
 
 
 
-// sincronização periódica
+
+
+// SINCRONIZAÇÃO LEVE
 
 setInterval(()=>{
 
@@ -336,23 +324,30 @@ transmission.playing
 ){
 
 
+
 io.emit(
 "sync-time",
 {
 
 time:
-(Date.now()-transmission.startedAt)/1000
+(Date.now()-transmission.startedAt)/1000,
+
+serverTime:
+Date.now()
 
 }
 
 );
 
 
+
 }
 
 
 
-},5000);
+},10000);
+
+
 
 
 
@@ -368,6 +363,7 @@ if(socket.deviceType==="player"){
 players--;
 
 }
+
 
 
 console.log(
@@ -387,7 +383,6 @@ socket.id
 
 
 
-
 const PORT =
 process.env.PORT || 3000;
 
@@ -397,10 +392,9 @@ server.listen(PORT,()=>{
 
 
 console.log(
-"Servidor rodando:",
+"Servidor rodando na porta",
 PORT
 );
-
 
 
 });
