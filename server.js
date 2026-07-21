@@ -1,28 +1,37 @@
-const express = require('http');
+const express = require('express');
+const http = require('http');
 const { Server } = require('ws');
 const bodyParser = require('body-parser');
 
-const app = require('express')();
+const app = express();
 app.use(bodyParser.json());
 
-// Cria o servidor HTTP combinado com WebSocket
-const server = express.createServer(app);
+const server = http.createServer(app);
 const wss = new Server({ server });
 
-// Variáveis de estado global para guardar a última mídia e o último comando
-let ultimaMidia = { url: "" };
-let ultimoComando = { acao: "" };
+// Estado global de transmissão contínua na nuvem (Cloud Live State)
+let estadoTransmissao = {
+    url: "",
+    playing: false,
+    startedAt: 0,
+    ultimoComando: ""
+};
 
-// --- 1. ROTAS HTTP ANTIGAS (Mantidas para compatibilidade) ---
-
+// --- ROTAS HTTP ---
 app.post('/enviar', (req, res) => {
     const { url } = req.body;
     if (url) {
-        ultimaMidia.url = url;
-        console.log(`[HTTP] Mídia recebida: ${url}`);
+        estadoTransmissao.url = url;
+        estadoTransmissao.playing = true;
+        estadoTransmissao.startedAt = Date.now();
+        console.log(`[HTTP] Nova mídia na nuvem: ${url}`);
         
-        // Repassa também para todos conectados via WebSocket
-        broadcast({ tipo: 'midia', url: url });
+        broadcast({
+            tipo: 'midia',
+            url: url,
+            startedAt: estadoTransmissao.startedAt,
+            playing: true
+        });
     }
     res.status(200).json({ status: 'ok' });
 });
@@ -30,49 +39,55 @@ app.post('/enviar', (req, res) => {
 app.post('/controle', (req, res) => {
     const { acao } = req.body;
     if (acao) {
-        ultimoComando.acao = acao;
-        console.log(`[HTTP] Comando recebido: ${acao}`);
-        
-        // Repassa também para todos conectados via WebSocket
-        broadcast({ tipo: 'comando', acao: acao });
+        estadoTransmissao.ultimoComando = acao;
+        console.log(`[HTTP] Comando remoto recebido: ${acao}`);
+
+        if (acao === 'pause') estadoTransmissao.playing = false;
+        if (acao === 'play' || acao === 'resume') estadoTransmissao.playing = true;
+
+        broadcast({
+            tipo: 'comando',
+            acao: acao,
+            playing: estadoTransmissao.playing
+        });
     }
     res.status(200).json({ status: 'ok' });
 });
 
-// Rotas de leitura para a TV/Player buscar o estado atual se precisar
-app.get('/obter-midia', (req, res) => {
-    res.json(ultimaMidia);
+app.get('/estado', (req, res) => {
+    res.json(estadoTransmissao);
 });
 
-app.get('/obter-comando', (req, res) => {
-    res.json(ultimoComando);
-});
-
-
-// --- 2. GERENCIAMENTO DE WEBSOCKET (Tempo Real) ---
-
+// --- WEBSOCKET (Tempo Real / Sincronia Total) ---
 wss.on('connection', (ws) => {
-    console.log('[WS] Novo cliente conectado!');
+    console.log('[WS] Novo cliente conectado (Player ou App)');
 
-    // Envia o estado atual assim que o cliente conecta
-    ws.send(JSON.stringify({ tipo: 'midia', url: ultimaMidia.url }));
+    // Envia o estado atual da nuvem imediatamente para sincronizar qualquer novo dispositivo
+    if (estadoTransmissao.url) {
+        ws.send(JSON.stringify({
+            tipo: 'sync-transmission',
+            url: estadoTransmissao.url,
+            startedAt: estadoTransmissao.startedAt,
+            playing: estadoTransmissao.playing
+        }));
+    }
 
-    // Ouve mensagens vindas do App ou do Player
     ws.on('message', (message) => {
         try {
             const dados = JSON.parse(message);
             console.log('[WS] Mensagem recebida:', dados);
 
-            if (dados.tipo === 'midia') {
-                ultimaMidia.url = dados.url;
-            } else if (dados.tipo === 'comando') {
-                ultimoComando.acao = dados.acao;
+            if (dados.tipo === 'midia' && dados.url) {
+                estadoTransmissao.url = dados.url;
+                estadoTransmissao.playing = true;
+                estadoTransmissao.startedAt = dados.startedAt || Date.now();
+            } else if (dados.tipo === 'comando' && dados.acao) {
+                estadoTransmissao.ultimoComando = dados.acao;
             }
 
-            // Reenvia (broadcasting) para TODOS os conectados (App, TV, etc.)
             broadcast(dados);
         } catch (e) {
-            console.error('[WS] Erro ao processar mensagem JSON:', e);
+            console.error('[WS] Erro ao parsear mensagem:', e);
         }
     });
 
@@ -81,7 +96,6 @@ wss.on('connection', (ws) => {
     });
 });
 
-// Função Auxiliar para enviar dados a todos conectados no WebSocket
 function broadcast(data) {
     const payload = JSON.stringify(data);
     wss.clients.forEach((client) => {
@@ -91,8 +105,7 @@ function broadcast(data) {
     });
 }
 
-// Inicia o servidor na porta que o Render definir (ou 3000 localmente)
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`Servidor rodando na porta ${PORT}`);
+    console.log(`Servidor de Cloud Streaming rodando na porta ${PORT}`);
 });
