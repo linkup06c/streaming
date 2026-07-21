@@ -9,13 +9,22 @@ app.use(bodyParser.json());
 const server = http.createServer(app);
 const wss = new Server({ server });
 
-// Estado global de transmissão contínua na nuvem (Cloud Live State)
+// Estado global absoluto na nuvem
 let estadoTransmissao = {
     url: "",
     playing: false,
-    startedAt: 0,
-    ultimoComando: ""
+    currentTime: 0,
+    updatedAt: Date.now()
 };
+
+// Função auxiliar para calcular o tempo atual caso esteja tocando
+function obterTempoAtual() {
+    if (!estadoTransmissao.playing) {
+        return estadoTransmissao.currentTime;
+    }
+    const segundosDecorridos = (Date.now() - estadoTransmissao.updatedAt) / 1000;
+    return estadoTransmissao.currentTime + segundosDecorridos;
+}
 
 // --- ROTAS HTTP ---
 app.post('/enviar', (req, res) => {
@@ -23,52 +32,69 @@ app.post('/enviar', (req, res) => {
     if (url) {
         estadoTransmissao.url = url;
         estadoTransmissao.playing = true;
-        estadoTransmissao.startedAt = Date.now();
+        estadoTransmissao.currentTime = 0;
+        estadoTransmissao.updatedAt = Date.now();
+        
         console.log(`[HTTP] Nova mídia na nuvem: ${url}`);
         
         broadcast({
             tipo: 'midia',
             url: url,
-            startedAt: estadoTransmissao.startedAt,
-            playing: true
+            playing: true,
+            currentTime: 0,
+            updatedAt: estadoTransmissao.updatedAt
         });
     }
     res.status(200).json({ status: 'ok' });
 });
 
 app.post('/controle', (req, res) => {
-    const { acao } = req.body;
+    const { acao, time } = req.body;
     if (acao) {
-        estadoTransmissao.ultimoComando = acao;
         console.log(`[HTTP] Comando remoto recebido: ${acao}`);
 
-        if (acao === 'pause') estadoTransmissao.playing = false;
-        if (acao === 'play' || acao === 'resume') estadoTransmissao.playing = true;
+        // Atualiza o tempo atual antes de mudar o estado
+        if (acao === 'pause' || acao === 'play' || acao === 'resume') {
+            estadoTransmissao.currentTime = time !== undefined ? time : obterTempoAtual();
+            estadoTransmissao.updatedAt = Date.now();
+        }
+
+        if (acao === 'pause') {
+            estadoTransmissao.playing = false;
+        } else if (acao === 'play' || acao === 'resume') {
+            estadoTransmissao.playing = true;
+        }
 
         broadcast({
             tipo: 'comando',
             acao: acao,
-            playing: estadoTransmissao.playing
+            playing: estadoTransmissao.playing,
+            currentTime: estadoTransmissao.currentTime,
+            updatedAt: estadoTransmissao.updatedAt
         });
     }
     res.status(200).json({ status: 'ok' });
 });
 
 app.get('/estado', (req, res) => {
-    res.json(estadoTransmissao);
+    res.json({
+        ...estadoTransmissao,
+        currentTimeCalculado: obterTempoAtual()
+    });
 });
 
 // --- WEBSOCKET (Tempo Real / Sincronia Total) ---
 wss.on('connection', (ws) => {
-    console.log('[WS] Novo cliente conectado (Player ou App)');
+    console.log('[WS] Novo dispositivo conectado!');
 
-    // Envia o estado atual da nuvem imediatamente para sincronizar qualquer novo dispositivo
+    // Sincroniza o estado atual exato com o novo dispositivo que acabou de entrar
     if (estadoTransmissao.url) {
         ws.send(JSON.stringify({
             tipo: 'sync-transmission',
             url: estadoTransmissao.url,
-            startedAt: estadoTransmissao.startedAt,
-            playing: estadoTransmissao.playing
+            playing: estadoTransmissao.playing,
+            currentTime: obterTempoAtual(),
+            updatedAt: estadoTransmissao.updatedAt
         }));
     }
 
@@ -80,9 +106,17 @@ wss.on('connection', (ws) => {
             if (dados.tipo === 'midia' && dados.url) {
                 estadoTransmissao.url = dados.url;
                 estadoTransmissao.playing = true;
-                estadoTransmissao.startedAt = dados.startedAt || Date.now();
-            } else if (dados.tipo === 'comando' && dados.acao) {
-                estadoTransmissao.ultimoComando = dados.acao;
+                estadoTransmissao.currentTime = 0;
+                estadoTransmissao.updatedAt = Date.now();
+            } else if (dados.tipo === 'comando') {
+                if (dados.acao === 'pause') {
+                    estadoTransmissao.currentTime = dados.currentTime !== undefined ? dados.currentTime : obterTempoAtual();
+                    estadoTransmissao.playing = false;
+                } else if (dados.acao === 'play' || dados.acao === 'resume') {
+                    estadoTransmissao.currentTime = dados.currentTime !== undefined ? dados.currentTime : obterTempoAtual();
+                    estadoTransmissao.playing = true;
+                    estadoTransmissao.updatedAt = Date.now();
+                }
             }
 
             broadcast(dados);
@@ -92,7 +126,7 @@ wss.on('connection', (ws) => {
     });
 
     ws.on('close', () => {
-        console.log('[WS] Cliente desconectado.');
+        console.log('[WS] Dispositivo desconectado.');
     });
 });
 
@@ -107,5 +141,5 @@ function broadcast(data) {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`Servidor de Cloud Streaming rodando na porta ${PORT}`);
+    console.log(`Servidor de Cloud Live rodando na porta ${PORT}`);
 });
